@@ -39,6 +39,7 @@
   (:F colour "F" "F-")
   (:S dir "S" "Sf"))
 ;; The %{Abutton:command} needs to be defined separately
+(define :% "%%")
 (define (:A str button-name command)
   (string-append "%{A" button-name ":" command "}" str "%{A}"))
 (define (update-sections futures)
@@ -73,16 +74,24 @@
   (cadr (grep "[0-9]+" (string-split (capture (free --mega))))))
 (define (get-free-cpu)
   (format "~A" (inexact->exact (round  (- 100 (string->number (last (string-split (capture (mpstat)))))) ))))
-
-
-
+(define (get-current-song)
+  (capture (mpc current)))
+(define (get-host-home)
+  (get-environment-variable "USER"))
+(define (get-kernel-version)
+  (car (string-search "\\d+\\.\\d+" (capture (uname -r)))))
 
 (defbar
   (:l
    (string-append
-    (:F "#bf616a" " ")
-    (:F "#c0c5c3" (get-free-memory))))
-  (:c "nah")
+    "  "
+    (get-kernel-version)
+    (:F "#96b5b4" "  ")
+    (get-free-cpu)
+    "% "))
+  (:c (get-current-song))
   (:r
-    (:F "#c0c5c3" (get-free-cpu)))
-  5)
+   (string-append
+    (:F "#bf616a" "  ")
+    (get-free-memory)
+    "MB")) 5)
