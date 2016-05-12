@@ -46,7 +46,6 @@
   (let ((output (foldr string-append "" (map force futures))))
     (when (not (string=? past-string output))
       (print output)
-      (newline)
       (flush-output))
     output))
 (define (run-loop functions timeout string)
