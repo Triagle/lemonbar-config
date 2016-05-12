@@ -26,7 +26,7 @@
 (define-syntax defbar
   (syntax-rules ()
     [(_ forms* ... timeout)
-     (run-loop (flatten (defbarsegments forms* ...)) timeout)]))
+     (run-loop (flatten (defbarsegments forms* ...)) timeout "")]))
 (defrules
   (:l "l")
   (:c "c")
@@ -42,16 +42,17 @@
 (define :% "%%")
 (define (:A str button-name command)
   (string-append "%{A" button-name ":" command "}" str "%{A}"))
-(define (update-sections futures)
-  (for-each (lambda (f) (printf "~a" (force f))) futures)
-  (newline)
-  (flush-output))
-(define (run-loop functions timeout)
-  (update-sections (map (lambda (f) (future (f))) functions))
-  (sleep timeout)
-  (run-loop functions timeout))
-
-
+(define (update-sections futures past-string)
+  (let ((output (foldr string-append "" (map force futures))))
+    (when (not (string=? past-string output))
+      (print output)
+      (newline)
+      (flush-output))
+    output))
+(define (run-loop functions timeout string)
+  (let ((updated-value (update-sections (map (lambda (f) (future (f))) functions) string)))
+    (sleep timeout)
+    (run-loop functions timeout updated-value)))
 
 
 
@@ -73,20 +74,21 @@
 (define (get-free-memory)
   (cadr (grep "[0-9]+" (string-split (capture (free --mega))))))
 (define (get-free-cpu)
-  (format "~A" (inexact->exact (round  (- 100 (string->number (last (string-split (capture (mpstat)))))) ))))
+  (number->string (inexact->exact (round  (- 100 (string->number (last (string-split (capture (mpstat)))))) ))))
 (define (get-current-song)
-  (capture (mpc current)))
+  (string-trim-both (capture (mpc current))))
 (define (get-host-home)
   (get-environment-variable "USER"))
 (define (get-kernel-version)
   (car (string-search "\\d+\\.\\d+" (capture (uname -r)))))
-
+(define (get-time)
+  (string-trim-both (capture (date +%I:%M))))
 (defbar
   (:l
    (string-append
     "  "
     (get-kernel-version)
-    (:F "#96b5b4" "  ")
+    (:F "#96b5b4" "   ")
     (get-free-cpu)
     "% "))
   (:c (get-current-song))
@@ -94,4 +96,7 @@
    (string-append
     (:F "#bf616a" "  ")
     (get-free-memory)
-    "MB")) 5)
+    "MB  "
+    (:F "#a3be8c" " ")
+    (get-time)
+    " ")) 1)
