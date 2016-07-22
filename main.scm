@@ -55,11 +55,11 @@
     (run-loop functions timeout updated-value)))
 
 ;; Some convenience functions
-(define (ellipize string length)
-  (if (> (length string) length)
-      (let ((string (substring string 0 (- length 3))))
-        (string-append string "..."))
-      string))
+(define (ellipize str len)
+  (if (> (string-length str) len)
+      (let ((str (substring str 0 len)))
+        (string-append str "..."))
+      str))
 ;;;;;;;;;;;;;;
 #|
  _                                   __ _
@@ -82,17 +82,19 @@
 (define (get-kernel-version)
   (car (string-search "\\d+\\.\\d+" (capture (uname -r)))))
 (define (get-wifi-ssid)
-  (let ((ssid (string-trim-both (capture (iwgetid -r)))))
-    (if (equal? ssid "Orcon-Wireless")
-        "Home"
-        (ellipize ssid 20))))
-(define (get-wifi-strength)
+  (let* ((raw-output (or (capture (iwgetid -r)) ""))
+         (ssid (string-trim-both raw-output)))
+    (cond
+     ((equal? ssid "") "")
+     ((equal? ssid "Orcon-Wireless") "Home")
+     (#t (ellipize ssid 20)))))
+(define (get-wifi-strength ssid)
   (let* ((match-wifi (string-search "\\d{4}\\s+\\d{2}" (read-all "/proc/net/wireless")))
         (wifi-strength (if match-wifi
                            (string->number (cadr (string-split (car match-wifi))))
                            100)))
     (cond
-     ((= wifi-strength 0) " ")
+     ((or (= wifi-strength 0) (equal? ssid "")) " ")
      ((<= wifi-strength 34) " ")
      ((<= wifi-strength 67) " ")
      ((<= wifi-strength 100) " "))))
@@ -108,8 +110,9 @@
   (:c (get-current-song))
   (:r
    (string-append
-    (:F "#bf616a" (get-wifi-strength))
-    (get-wifi-ssid)
+    (let ((ssid (get-wifi-ssid)))
+      (string-append (:F "#bf616a" (get-wifi-strength ssid))
+      ssid))
     " "
     (:F "#a3be8c" " ")
     (get-time)
