@@ -87,7 +87,7 @@
         "Home"
         (ellipize ssid 20))))
 (define (get-wifi-strength)
-  (let ((match-wifi (string-search "\\d{4}\\s+\\d{2}" (read-all "/proc/net/wireless")))
+  (let* ((match-wifi (string-search "\\d{4}\\s+\\d{2}" (read-all "/proc/net/wireless")))
         (wifi-strength (if match-wifi
                            (string->number (cadr (string-split (car match-wifi))))
                            100)))
