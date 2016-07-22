@@ -4,6 +4,7 @@
 (use srfi-98)
 (use posix)
 (use regex)
+(use utils)
 (define-syntax defrule
   (syntax-rules ()
     [(defrule (name opener))
@@ -40,8 +41,8 @@
   (:S dir "S" "Sf"))
 ;; The %{Abutton:command} needs to be defined separately
 (define :% "%%")
-(define (:A str button-name command)
-  (string-append "%{A" button-name ":" command "}" str "%{A}"))
+(define (:A button-name command str)
+  (string-append "%{A" button-name ":" command ":}" str "%{A}"))
 (define (update-sections futures past-string)
   (let ((output (foldr string-append "" (map force futures))))
     (when (not (string=? past-string output))
@@ -53,9 +54,10 @@
     (sleep timeout)
     (run-loop functions timeout updated-value)))
 
-
-
-
+;; Some convenience functions
+(define (ellipize string length)
+  (let ((string (substring string 0 (- length 3))))
+    (string-append string "...")))
 ;;;;;;;;;;;;;;
 #|
  _                                   __ _
@@ -70,16 +72,25 @@
 
 
 ;; Get remaining system memory from the free -m command
-(define (get-free-memory)
-  (cadr (grep "[0-9]+" (string-split (capture (free --mega))))))
-(define (get-free-cpu)
-  (number->string (inexact->exact (round  (- 100 (string->number (last (string-split (capture (mpstat)))))) ))))
+(define (get-workspace-number)
+  (substring (car (filter (lambda (x) (member (substring x 0 1) '("F" "O")))
+                          (string-split (cadr (string-split (string-trim-both (capture (bspc wm -g))) "M")) ":"))) 1))
 (define (get-current-song)
   (string-trim-both (capture (mpc current))))
-(define (get-host-home)
-  (get-environment-variable "USER"))
 (define (get-kernel-version)
   (car (string-search "\\d+\\.\\d+" (capture (uname -r)))))
+(define (get-wifi-ssid)
+  (let ((ssid (string-trim-both (capture (iwgetid -r)))))
+    (if (equal? ssid "Orcon-Wireless")
+        "Home"
+        ssid)))
+(define (get-wifi-strength)
+  (let ((wifi-strength (string->number (cadr (string-split (car (string-search "\\d{4}\\s+\\d{2}" (read-all "/proc/net/wireless"))))))))
+    (cond
+     ((= wifi-strength 0) " ")
+     ((<= wifi-strength 34) " ")
+     ((<= wifi-strength 67) " ")
+     ((<= wifi-strength 100) " "))))
 (define (get-time)
   (string-trim-both (capture (date +%I:%M))))
 (defbar
@@ -87,15 +98,14 @@
    (string-append
     "  "
     (get-kernel-version)
-    (:F "#96b5b4" "   ")
-    (get-free-cpu)
-    "% "))
+    (:F "#96b5b4" "   ")
+    (get-workspace-number)))
   (:c (get-current-song))
   (:r
    (string-append
-    (:F "#bf616a" "  ")
-    (get-free-memory)
-    "MB  "
+    (:F "#bf616a" (get-wifi-strength))
+    (get-wifi-ssid)
+    " "
     (:F "#a3be8c" " ")
     (get-time)
     " ")) 1)
