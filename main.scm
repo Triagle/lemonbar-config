@@ -56,8 +56,10 @@
 
 ;; Some convenience functions
 (define (ellipize string length)
-  (let ((string (substring string 0 (- length 3))))
-    (string-append string "...")))
+  (if (> (length string) length)
+      (let ((string (substring string 0 (- length 3))))
+        (string-append string "..."))
+      string))
 ;;;;;;;;;;;;;;
 #|
  _                                   __ _
@@ -83,7 +85,7 @@
   (let ((ssid (string-trim-both (capture (iwgetid -r)))))
     (if (equal? ssid "Orcon-Wireless")
         "Home"
-        ssid)))
+        (ellipize ssid 20))))
 (define (get-wifi-strength)
   (let ((wifi-strength (string->number (cadr (string-split (car (string-search "\\d{4}\\s+\\d{2}" (read-all "/proc/net/wireless"))))))))
     (cond
