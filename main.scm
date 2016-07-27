@@ -1,119 +1,69 @@
-(require-extension forcible)
-(require-extension shell)
-(use srfi-1)
-(use srfi-98)
-(use posix)
-(use regex)
-(use utils)
-(define-syntax defrule
-  (syntax-rules ()
-    [(defrule (name opener))
-     (define (name str) (string-append "%{" opener "}" str))]
-    [(defrule (name opener closer))
-     (define (name str) (string-append "%{" opener "}" str "%{" closer "}"))]
-    [(defrule (name arg opener closer))
-     (define (name arg str) (string-append "%{" opener arg "}" str "%{" closer "}"))]))
-(define-syntax defrules
-  (syntax-rules ()
-    [(_ rule) (defrule rule)]
-    [(_ rule rules* ...)
-     (begin (defrule rule)
-            (defrules rules* ...))]))
-(define-syntax defbarsegments
-  (syntax-rules ()
-    [(_ form) (lambda () form)]
-    [(_ form forms* ...)
-     (list (defbarsegments form) (defbarsegments forms* ...))]))
-(define-syntax defbar
-  (syntax-rules ()
-    [(_ forms* ... timeout)
-     (run-loop (flatten (defbarsegments forms* ...)) timeout "")]))
-(defrules
-  (:l "l")
-  (:c "c")
-  (:r "r")
-  (:R "R" "R")
-  (:O width "O" "O-")
-  (:B colour "B" "B-")
-  (:T index "T" "T-")
-  (:U colour "U" "U-")
-  (:F colour "F" "F-")
-  (:S dir "S" "Sf"))
-;; The %{Abutton:command} needs to be defined separately
-(define :% "%%")
-(define (:A button-name command str)
-  (string-append "%{A" button-name ":" command ":}" str "%{A}"))
-(define (update-sections futures past-string)
-  (let ((output (foldr string-append "" (map force futures))))
-    (when (not (string=? past-string output))
-      (print output)
-      (flush-output))
-    output))
-(define (run-loop functions timeout string)
-  (let ((updated-value (update-sections (map (lambda (f) (future (f))) functions) string)))
-    (sleep timeout)
-    (run-loop functions timeout updated-value)))
+(require-extension gochan miscmacros shell toml defstruct pty)
+(use srfi-1 srfi-13 srfi-98 posix regex utils)
+(define jobs (gochan))
+(define res (gochan))
+(defstruct bar-segment
+  dynamic command reload static)
+(define configuration
+  (read-toml (read-all "config.toml")))
+(print configuration)
+(define bar (cdr (assoc 'bar (cdr (assoc 'config configuration)))))
+(define items (let loop ((configuration-no-header (remove (lambda (item)
+                                                            (equal? item (assoc 'config configuration))) configuration))
+                         (id 0)
+                         (acc '()))
+                (if (null? configuration-no-header)
+                    acc
+                    (loop (cdr configuration-no-header) (+ id 1) (cons (cons id (alist->bar-segment (cdar configuration-no-header))) acc)))))
+(define (watch-and-send cmd id chan)
+  (call-with-pty-process-io
+      cmd
+    (lambda (in out pid)
+      (letrec ((get-next (lambda ()
+                           (let ((v (read-line in)))
+                             (if (not (eof-object? v))
+                                 (gochan-send chan (cons id v)))
+                             (get-next)
+                             ))))
+        (get-next)))))
 
-;; Some convenience functions
-(define (ellipize str len)
-  (if (> (string-length str) len)
-      (let ((str (substring str 0 len)))
-        (string-append str "..."))
-      str))
-;;;;;;;;;;;;;;
-#|
- _                                   __ _
-| |__   __ _ _ __    ___ ___  _ __  / _(_) __ _
-| '_ \ / _` | '__|  / __/ _ \| '_ \| |_| |/ _` |
-| |_) | (_| | |    | (_| (_) | | | |  _| | (_| |
-|_.__/ \__,_|_|     \___\___/|_| |_|_| |_|\__, |
-                                          |___/
-|#
-;;;;;;;;;;;;;;
+(define (bar-segment->chan id chan segment)
+  (string-trim-both (watch-and-send (bar-segment-command segment) id chan)))
+(define (bar-segment->string segment)
+  (string-trim-both (capture (,(bar-segment-command segment)))))
+(define (worker jobs results)
+  (gochan-for-each jobs
+                   (lambda (segment)
+                     (let ((cont #t))
+                       (let* ((seg-struct (cdr segment))
+                              (poll (bar-segment-reload seg-struct))
+                              (dynamic (equal? (bar-segment-dynamic seg-struct) "true"))
+                              (static (or (equal? (bar-segment-reload seg-struct) "true") (bar-segment-static seg-struct))))
+                         (if dynamic
+                             (watch-and-send (bar-segment-command seg-struct) (car segment) results)
+                             (let ((cont #t))
+                               (while cont
+                                 (gochan-send results (cons (car segment) (bar-segment->string seg-struct)))
+                                 (if static
+                                     (set! cont #f)
+                                     (thread-sleep! poll))))))))))
+(define job-list
+  (map
+   (lambda (x) (thread-start! (make-thread (cut worker jobs res) x)))
+   (iota (length items))))
 
-
-
-;; Get remaining system memory from the free -m command
-(define (get-workspace-number)
-  (substring (car (filter (lambda (x) (member (substring x 0 1) '("F" "O")))
-                          (string-split (cadr (string-split (string-trim-both (capture (bspc wm -g))) "M")) ":"))) 1))
-(define (get-current-song)
-  (string-trim-both (capture (mpc current))))
-(define (get-kernel-version)
-  (car (string-search "\\d+\\.\\d+" (capture (uname -r)))))
-(define (get-wifi-ssid)
-  (let* ((raw-output (or (capture (iwgetid -r)) ""))
-         (ssid (string-trim-both raw-output)))
-    (cond
-     ((equal? ssid "") "")
-     ((equal? ssid "Orcon-Wireless") "Home")
-     (#t (ellipize ssid 20)))))
-(define (get-wifi-strength ssid)
-  (let* ((match-wifi (string-search "\\d{4}\\s+\\d{2}" (read-all "/proc/net/wireless")))
-        (wifi-strength (if match-wifi
-                           (string->number (cadr (string-split (car match-wifi))))
-                           100)))
-    (cond
-     ((or (= wifi-strength 0) (equal? ssid "")) " ")
-     ((<= wifi-strength 34) " ")
-     ((<= wifi-strength 67) " ")
-     ((<= wifi-strength 100) " "))))
-(define (get-time)
-  (string-trim-both (capture (date +%I:%M))))
-(defbar
-  (:l
-   (string-append
-    "  "
-    (get-kernel-version)
-    (:F "#96b5b4" "   ")
-    (get-workspace-number)))
-  (:c (get-current-song))
-  (:r
-   (string-append
-    (let ((ssid (get-wifi-ssid)))
-      (string-append (:F "#bf616a" (get-wifi-strength ssid))
-      ssid))
-    " "
-    (:F "#a3be8c" " ")
-    (get-time)
-    " ")) 1)
+(define (start-bar)
+  (let loop ((items items))
+    (if (null? items)
+        #t
+        (begin
+          (gochan-send jobs (car items))
+          (loop (cdr items)))))
+  (let loop ((bar-status '()) (prev-status ""))
+    (let* ((update (gochan-receive res))
+           (bar-status (sort (cons update (remove (lambda (x) (= (car x) (car update))) bar-status)) (lambda (x y) (< (car x) (car y)))))
+           (bar-status-string (string-join (map cdr bar-status))))
+      (if (not (string=? prev-status bar-status-string))
+          (print bar-status-string))
+      (loop bar-status bar-status-string))))
+(start-bar)
